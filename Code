@@ -1,0 +1,78 @@
+!pip install trimesh
+!pip install pymeshfix
+!pip install manifold3d
+!pip install numpy-stl
+
+import trimesh
+import pymeshfix
+import numpy as np
+from manifold3d.booleans import difference  # <--- use this
+
+
+def make_watertight(mesh):
+    """Ensures the mesh is watertight using pymeshfix."""
+    mesh_fix = pymeshfix.MeshFix(mesh.vertices, mesh.faces)
+    mesh_fix.repair()
+    return trimesh.Trimesh(vertices=mesh_fix.v, faces=mesh_fix.f)
+
+def mirror_mesh(mesh):
+    """Mirrors the given mesh along the X-axis and fixes face winding."""
+    mirrored_vertices = mesh.vertices.copy()
+    mirrored_vertices[:, 0] *= -1  # Mirror along X-axis
+
+    # Reverse face winding to maintain correct normals
+    mirrored_faces = mesh.faces[:, ::-1]
+
+    return trimesh.Trimesh(vertices=mirrored_vertices, faces=mirrored_faces, process=True)
+
+def scale_mesh_with_alignment(mesh, scale_factor):
+    """Uniformly scales the mesh while keeping it centered."""
+    original_center = mesh.centroid
+    mesh.apply_scale(scale_factor)
+    new_center = mesh.centroid
+    translation_vector = original_center - new_center
+    mesh.apply_translation(translation_vector)
+    return mesh
+
+def create_mirrored_mould(main_stl: str, stump_stl: str, output_stl: str, padding_factor=1.02):
+    """
+    Loads the main model and stump, repairs them, mirrors the main model,
+    scales the stump with padding, performs Boolean subtraction (main - stump),
+    and saves the result.
+    """
+    # Load and repair the main model
+    main_mesh = trimesh.load_mesh(main_stl)
+    main_mesh = make_watertight(main_mesh)
+
+    # Mirror the main model
+    mirrored_main = mirror_mesh(main_mesh)
+    mirrored_main = make_watertight(mirrored_main)
+
+    # Load and repair the stump
+    stump_mesh = trimesh.load_mesh(stump_stl)
+    stump_mesh = make_watertight(stump_mesh)
+
+    print("Mirrored main is watertight:", mirrored_main.is_volume)
+    print("Stump is watertight:", stump_mesh.is_volume)
+
+    # Scale (pad) the stump
+    stump_mesh = scale_mesh_with_alignment(stump_mesh, padding_factor)
+
+    # Perform Boolean subtraction (mirrored main - padded stump)
+    mould_mesh = trimesh.boolean.difference(
+    [mirrored_main, stump_mesh],
+    engine='scad',  # alternative
+    check_volume=False  # skip strict check to allow debugging
+)
+
+    # Save the final mould
+    mould_mesh.export(output_stl)
+    print(f"✅ Mirrored mould with padding saved as '{output_stl}'")
+
+# Example usage:
+create_mirrored_mould(
+    main_stl='mirrored_forearm.stl',
+    stump_stl='scanned_stump.stl',
+    output_stl='mirrored_mould_with_padding.stl',
+    padding_factor=1.02  # 2% padding
+)
